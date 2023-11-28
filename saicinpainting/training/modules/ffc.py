@@ -10,7 +10,49 @@ import torch.nn.functional as F
 from saicinpainting.training.modules.base import get_activation, BaseDiscriminator
 from saicinpainting.training.modules.spatial_transform import LearnableSpatialTransformWrapper
 from saicinpainting.training.modules.squeeze_excitation import SELayer
-from saicinpainting.utils import get_shape
+
+
+class SeparableConv2d(nn.Module):
+
+    def __init__(
+            self,
+            in_channels,
+            out_channels,
+            kernel_size,
+            stride=1,
+            padding=0,
+            dilation=1,
+            bias: bool = True,
+            padding_mode: str = 'zeros',  # TODO: refine this type
+    ):
+        super().__init__()
+
+        self.conv1 = nn.Conv2d(
+            in_channels=in_channels,
+            out_channels=in_channels,
+            kernel_size=kernel_size,
+            stride=stride,
+            padding=padding,
+            dilation=dilation,
+            groups=in_channels,
+            bias=bias,
+            padding_mode=padding_mode,
+        )
+        self.conv2 = nn.Conv2d(
+            in_channels=in_channels,
+            out_channels=out_channels,
+            kernel_size=1,
+            stride=1,
+            padding=0,
+            dilation=dilation,
+            groups=1,
+            bias=False
+        )
+
+    def forward(self, x):
+        x = self.conv1(x)
+        x = self.conv2(x)
+        return x
 
 
 class FFCSE_block(nn.Module):
@@ -40,9 +82,9 @@ class FFCSE_block(nn.Module):
         x = self.relu1(self.conv1(x))
 
         x_l = 0 if self.conv_a2l is None else id_l * \
-            self.sigmoid(self.conv_a2l(x))
+                                              self.sigmoid(self.conv_a2l(x))
         x_g = 0 if self.conv_a2g is None else id_g * \
-            self.sigmoid(self.conv_a2g(x))
+                                              self.sigmoid(self.conv_a2g(x))
         return x_l, x_g
 
 
@@ -178,22 +220,24 @@ class FFC(nn.Module):
         in_cl = in_channels - in_cg
         out_cg = int(out_channels * ratio_gout)
         out_cl = out_channels - out_cg
-        #groups_g = 1 if groups == 1 else int(groups * ratio_gout)
-        #groups_l = 1 if groups == 1 else groups - groups_g
+        # groups_g = 1 if groups == 1 else int(groups * ratio_gout)
+        # groups_l = 1 if groups == 1 else groups - groups_g
 
         self.ratio_gin = ratio_gin
         self.ratio_gout = ratio_gout
         self.global_in_num = in_cg
 
-        module = nn.Identity if in_cl == 0 or out_cl == 0 else nn.Conv2d
+        assert groups == 1
+
+        module = nn.Identity if in_cl == 0 or out_cl == 0 else nn.Conv2d if kernel_size == 1 else SeparableConv2d
         self.convl2l = module(in_cl, out_cl, kernel_size,
-                              stride, padding, dilation, groups, bias, padding_mode=padding_type)
-        module = nn.Identity if in_cl == 0 or out_cg == 0 else nn.Conv2d
+                              stride, padding, dilation, bias=bias, padding_mode=padding_type)
+        module = nn.Identity if in_cl == 0 or out_cg == 0 else nn.Conv2d if kernel_size == 1 else SeparableConv2d
         self.convl2g = module(in_cl, out_cg, kernel_size,
-                              stride, padding, dilation, groups, bias, padding_mode=padding_type)
-        module = nn.Identity if in_cg == 0 or out_cl == 0 else nn.Conv2d
+                              stride, padding, dilation, bias=bias, padding_mode=padding_type)
+        module = nn.Identity if in_cg == 0 or out_cl == 0 else nn.Conv2d if kernel_size == 1 else SeparableConv2d
         self.convg2l = module(in_cg, out_cl, kernel_size,
-                              stride, padding, dilation, groups, bias, padding_mode=padding_type)
+                              stride, padding, dilation, bias=bias, padding_mode=padding_type)
         module = nn.Identity if in_cg == 0 or out_cg == 0 else SpectralTransform
         self.convg2g = module(
             in_cg, out_cg, stride, 1 if groups == 1 else groups // 2, enable_lfu, **spectral_kwargs)
@@ -347,18 +391,25 @@ class FFCResNetGenerator(nn.Module):
         ### upsample
         for i in range(n_downsampling):
             mult = 2 ** (n_downsampling - i)
-            model += [nn.ConvTranspose2d(min(max_features, ngf * mult),
-                                         min(max_features, int(ngf * mult / 2)),
-                                         kernel_size=3, stride=2, padding=1, output_padding=1),
-                      up_norm_layer(min(max_features, int(ngf * mult / 2))),
-                      up_activation]
+            model += [
+                # nn.ConvTranspose2d(min(max_features, ngf * mult),
+                #                    min(max_features, int(ngf * mult / 2)),
+                #                    kernel_size=3, stride=2, padding=1, output_padding=1),
+                nn.Upsample(scale_factor=2),
+                SeparableConv2d(min(max_features, ngf * mult),
+                                min(max_features, int(ngf * mult / 2)),
+                                kernel_size=3, stride=1, padding=1),
+                up_norm_layer(min(max_features, int(ngf * mult / 2))),
+                up_activation]
 
         if out_ffc:
             model += [FFCResnetBlock(ngf, padding_type=padding_type, activation_layer=activation_layer,
                                      norm_layer=norm_layer, inline=True, **out_ffc_kwargs)]
 
         model += [nn.ReflectionPad2d(3),
-                  nn.Conv2d(ngf, output_nc, kernel_size=7, padding=0)]
+                  # nn.Conv2d(ngf, output_nc, kernel_size=7, padding=0)
+                  SeparableConv2d(ngf, output_nc, kernel_size=7, padding=0)
+                  ]
         if add_out_act:
             model.append(get_activation('tanh' if add_out_act is True else add_out_act))
         self.model = nn.Sequential(*model)
@@ -377,7 +428,7 @@ class FFCNLayerDiscriminator(BaseDiscriminator):
             return nn.LeakyReLU(negative_slope=0.2, inplace=inplace)
 
         kw = 3
-        padw = int(np.ceil((kw-1.0)/2))
+        padw = int(np.ceil((kw - 1.0) / 2))
         sequence = [[FFC_BN_ACT(input_nc, ndf, kernel_size=kw, padding=padw, norm_layer=norm_layer,
                                 activation_layer=_act_ctor, **init_conv_kwargs)]]
 
@@ -411,7 +462,7 @@ class FFCNLayerDiscriminator(BaseDiscriminator):
         sequence += [[nn.Conv2d(nf, 1, kernel_size=kw, stride=1, padding=padw)]]
 
         for n in range(len(sequence)):
-            setattr(self, 'model'+str(n), nn.Sequential(*sequence[n]))
+            setattr(self, 'model' + str(n), nn.Sequential(*sequence[n]))
 
     def get_all_activations(self, x):
         res = [x]
