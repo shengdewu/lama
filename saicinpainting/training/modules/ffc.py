@@ -122,7 +122,7 @@ class FourierUnit(nn.Module):
             orig_size = x.shape[-2:]
             x = F.interpolate(x, scale_factor=self.spatial_scale_factor, mode=self.spatial_scale_mode, align_corners=False)
 
-        r_size = x.size()
+        # r_size = x.size()
         # (batch, c, h, w/2+1, 2)
         fft_dim = (-3, -2, -1) if self.ffc3d else (-2, -1)
         ffted = torch.fft.rfftn(x, dim=fft_dim, norm=self.fft_norm)
@@ -168,8 +168,7 @@ class SpectralTransform(nn.Module):
 
         self.stride = stride
         self.conv1 = nn.Sequential(
-            nn.Conv2d(in_channels, out_channels //
-                      2, kernel_size=1, groups=groups, bias=False),
+            nn.Conv2d(in_channels, out_channels // 2, kernel_size=1, groups=groups, bias=False),
             nn.BatchNorm2d(out_channels // 2),
             nn.ReLU(inplace=True)
         )

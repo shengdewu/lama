@@ -425,11 +425,16 @@ class GlobalGenerator(nn.Module):
         # upsample
         for i in range(n_downsampling):
             mult = 2 ** (n_downsampling - i)
-            model += [nn.ConvTranspose2d(min(max_features, ngf * mult),
-                                         min(max_features, int(ngf * mult / 2)),
-                                         kernel_size=3, stride=2, padding=1, output_padding=1),
-                      up_norm_layer(min(max_features, int(ngf * mult / 2))),
-                      up_activation]
+            model += [
+                # nn.ConvTranspose2d(min(max_features, ngf * mult),
+                #                          min(max_features, int(ngf * mult / 2)),
+                #                          kernel_size=3, stride=2, padding=1, output_padding=1),
+                nn.Upsample(scale_factor=2),
+                conv_layer(min(max_features, ngf * mult),
+                           min(max_features, int(ngf * mult / 2)),
+                           kernel_size=3, stride=1, padding=1),
+                up_norm_layer(min(max_features, int(ngf * mult / 2))),
+                up_activation]
         model += [nn.ReflectionPad2d(3),
                   nn.Conv2d(ngf, output_nc, kernel_size=7, padding=0)]
         if add_out_act:

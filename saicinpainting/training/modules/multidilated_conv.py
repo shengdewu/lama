@@ -3,6 +3,7 @@ import torch.nn as nn
 import random
 from saicinpainting.training.modules.depthwise_sep_conv import DepthWiseSeperableConv
 
+
 class MultidilatedConv(nn.Module):
     def __init__(self, in_dim, out_dim, kernel_size, dilation_num=3, comb_mode='sum', equal_dim=True,
                  shared_weights=False, padding=1, min_dilation=1, shuffle_in_channels=False, use_depthwise=False, **kwargs):
@@ -27,7 +28,7 @@ class MultidilatedConv(nn.Module):
                         index += list(range(starts[j], starts[j] + lengths[j]))
                         starts[j] += lengths[j]
                 self.index = index
-                assert(len(index) == out_dim)
+                assert (len(index) == out_dim)
             self.out_dims = out_dims
         else:
             self.cat_out = False
@@ -82,7 +83,7 @@ class MultidilatedConv(nn.Module):
                 new_x = []
                 start = 0
                 for dim in self.in_dims:
-                    new_x.append(x[:, start:start+dim])
+                    new_x.append(x[:, start:start + dim])
                     start += dim
                 x = new_x
         for i, conv in enumerate(self.convs):
